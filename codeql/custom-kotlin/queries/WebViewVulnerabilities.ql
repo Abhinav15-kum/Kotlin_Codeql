@@ -1,27 +1,35 @@
 /**
- * @name Insecure WebView JavaScript Enabled
- * @description Detects cases where WebView enables JavaScript in Android apps written in Kotlin.
+ * @name Hardcoded credentials in Kotlin
+ * @description Finds hardcoded secrets like passwords, API keys, or tokens in Kotlin code.
  * @kind problem
- * @problem.severity warning
- * @id kotlin/android/insecure-webview-jsenabled
+ * @problem.severity error
  * @tags security
+ *       external/cwe/cwe-798
+ *       external/cwe/cwe-259
  */
 
 import kotlin
-import semmle.code.kotlin.controlflow.DataFlow
+import semmle.code.kotlin.Expressions
+import semmle.code.kotlin.Statements
+import semmle.code.kotlin.Declarations
 
-from
-  MethodAccess ma,
-  PropertyAccess pa,
-  DataFlow::Node source,
-  DataFlow::Node sink
+predicate isSensitiveName(string name) {
+  name.toLowerCase().matches("%password%") or
+  name.toLowerCase().matches("%secret%") or
+  name.toLowerCase().matches("%token%") or
+  name.toLowerCase().matches("%apikey%") or
+  name.toLowerCase().matches("%auth%")
+}
+
+predicate isHardcodedCredential(Expr e) {
+  e instanceof StringLiteral and
+  e.(StringLiteral).getValue().length() > 5 and
+  not e.toString().matches("%BuildConfig.%") // Exclude build-time configs
+}
+
+from VariableDeclarator v, Expr init
 where
-  pa.getName() = "javaScriptEnabled" and
-  ma.getMethod().getName() = "setJavaScriptEnabled" and
-  pa.getQualifier().getType().getName().matches("WebView") and
-  sink.asExpr() = ma.getArgument(0) and
-  source.asExpr() instanceof BooleanLiteral and
-  source.asExpr().toString() = "true"
-select
-  ma,
-  "Insecure WebView configuration: JavaScript is enabled without validation."
+  isSensitiveName(v.getName()) and
+  v.hasInitializer(init) and
+  isHardcodedCredential(init)
+select v, "Possible hardcoded credential: " + v.getName()
