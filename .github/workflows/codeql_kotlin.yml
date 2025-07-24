@@ -20,10 +20,11 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Initialize CodeQL
-      uses: github/codeql-action/init@v3
+    - name: "Initialize CodeQL"
+      uses: github/codeql-action/init@v2
       with:
-        languages: java-kotlin # Specify both languages
+      languages: java-kotlin
+      config-file: .github/codeql/codeql-config.yml
 
     - name: Autobuild (or specify manual build steps)
       uses: github/codeql-action/autobuild@v3
