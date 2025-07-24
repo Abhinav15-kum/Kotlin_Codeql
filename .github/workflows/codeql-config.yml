@@ -1,3 +1,3 @@
 name: "Custom Kotlin WebView Scans"
-query-packs::
+queries:
   - uses: codeql/custom-kotlin/queries
