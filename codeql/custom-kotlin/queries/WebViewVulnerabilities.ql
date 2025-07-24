@@ -1,70 +1,173 @@
 /**
- * @name WebView vulnerability detector
- * @description Detects potentially dangerous WebView usage in Kotlin Android code.
- * @kind path-problem
- * @problem.severity error
- * @id kotlin/android/webview-vulnerability
+ * @name WebView vulnerabilities in Kotlin
+ * @description Identifies potential security vulnerabilities in Android WebView usage
+ * @kind problem
+ * @problem.severity warning
+ * @security-severity 7.5
+ * @precision medium
+ * @id kotlin/webview-vulnerabilities
  * @tags security
  *       external/cwe/cwe-079
+ *       external/cwe/cwe-200
  *       external/cwe/cwe-094
- *       external/cwe/cwe-1022
  */
 
-import kotlin
-import semmle.code.kotlin.dataflow.DataFlow
-import semmle.code.android.AndroidWebView
+import java
+import semmle.code.java.dataflow.DataFlow
+import semmle.code.java.dataflow.TaintTracking
 
-/**
- * Configuration for tracking tainted data into WebView sinks
- */
-class WebViewTaintConfig extends TaintTracking::Configuration {
-  WebViewTaintConfig() { this = "WebViewTaintConfig" }
+// WebView class and related classes
+class WebViewClass extends RefType {
+  WebViewClass() {
+    this.hasQualifiedName("android.webkit", "WebView") or
+    this.hasQualifiedName("android.webkit", "WebSettings") or
+    this.hasQualifiedName("android.webkit", "WebViewClient") or
+    this.hasQualifiedName("android.webkit", "WebChromeClient")
+  }
+}
+
+// Dangerous WebView methods
+class DangerousWebViewMethod extends Method {
+  DangerousWebViewMethod() {
+    this.getDeclaringType() instanceof WebViewClass and
+    (
+      this.hasName("loadUrl") or
+      this.hasName("loadData") or
+      this.hasName("loadDataWithBaseURL") or
+      this.hasName("evaluateJavascript") or
+      this.hasName("addJavascriptInterface")
+    )
+  }
+}
+
+// WebSettings dangerous configurations
+class DangerousWebSettingsMethod extends Method {
+  DangerousWebSettingsMethod() {
+    this.getDeclaringType().hasQualifiedName("android.webkit", "WebSettings") and
+    (
+      this.hasName("setJavaScriptEnabled") or
+      this.hasName("setAllowFileAccess") or
+      this.hasName("setAllowFileAccessFromFileURLs") or
+      this.hasName("setAllowUniversalAccessFromFileURLs") or
+      this.hasName("setAllowContentAccess") or
+      this.hasName("setMixedContentMode") or
+      this.hasName("setDomStorageEnabled")
+    )
+  }
+}
+
+// Taint tracking for user input to WebView
+class WebViewTaintTrackingConfig extends TaintTracking::Configuration {
+  WebViewTaintTrackingConfig() { this = "WebViewTaintTracking" }
 
   override predicate isSource(DataFlow::Node source) {
-    source.asExpr() instanceof Parameter or
     exists(Method m |
-      m.hasName("getIntent") or
-      m.hasName("getExtras") or
-      m.hasName("getStringExtra")
-    |
-      source.asExpr() = m.getAnAccess()
+      source.asExpr().(MethodAccess).getMethod() = m and
+      (
+        // Intent data sources
+        m.hasName("getStringExtra") or
+        m.hasName("getDataString") or
+        m.hasName("getData") or
+        // Bundle sources
+        m.hasName("getString") or
+        // Network/HTTP sources
+        m.getDeclaringType().hasQualifiedName("java.net", "URL") or
+        m.getDeclaringType().hasQualifiedName("okhttp3", "Response") or
+        // User input sources
+        m.getDeclaringType().hasQualifiedName("android.widget", "EditText") and
+        m.hasName("getText")
+      )
     )
   }
 
   override predicate isSink(DataFlow::Node sink) {
-    exists(MethodAccess call |
-      call.getMethod().getDeclaringType().hasQualifiedName("android.webkit", "WebView") and
-      (
-        call.getMethod().getName() = "loadUrl" or
-        call.getMethod().getName() = "loadDataWithBaseURL" or
-        call.getMethod().getName() = "addJavascriptInterface"
-      ) |
-      sink.asExpr() = call.getArgument(0)
+    exists(MethodAccess ma |
+      sink.asExpr() = ma.getAnArgument() and
+      ma.getMethod() instanceof DangerousWebViewMethod
     )
   }
-
-  override predicate isSanitizer(DataFlow::Node node) {
-    // Add sanitizer logic if known
-    false
-  }
 }
 
-/**
- * Check whether JavaScript is explicitly enabled
- */
-predicate javascriptEnabled(android.WebSettings settings) {
-  exists(MethodAccess ma |
-    ma.getMethod().hasName("setJavaScriptEnabled") and
-    ma.getQualifier().getType() instanceof android.WebSettings and
-    ma.getArgument(0).toString() = "true" and
-    ma.getQualifier() = settings
+// Query for JavaScript enabled without proper validation
+from MethodAccess jsEnabledCall, Literal trueLiteral
+where
+  jsEnabledCall.getMethod().hasName("setJavaScriptEnabled") and
+  jsEnabledCall.getArgument(0) = trueLiteral and
+  trueLiteral.getValue() = "true"
+select jsEnabledCall, "JavaScript is enabled in WebView without proper security considerations"
+
+or
+
+// Query for file access vulnerabilities
+from MethodAccess fileAccessCall, Literal trueLiteral
+where
+  fileAccessCall.getMethod() instanceof DangerousWebSettingsMethod and
+  (
+    fileAccessCall.getMethod().hasName("setAllowFileAccess") or
+    fileAccessCall.getMethod().hasName("setAllowFileAccessFromFileURLs") or
+    fileAccessCall.getMethod().hasName("setAllowUniversalAccessFromFileURLs")
+  ) and
+  fileAccessCall.getArgument(0) = trueLiteral and
+  trueLiteral.getValue() = "true"
+select fileAccessCall, "Dangerous file access permissions enabled in WebView: " + fileAccessCall.getMethod().getName()
+
+or
+
+// Query for JavaScript interface injection vulnerabilities
+from MethodAccess jsInterfaceCall
+where
+  jsInterfaceCall.getMethod().hasName("addJavascriptInterface")
+select jsInterfaceCall, "JavaScript interface added to WebView - ensure proper @JavascriptInterface annotations and input validation"
+
+or
+
+// Query for mixed content vulnerabilities
+from MethodAccess mixedContentCall, Literal allowValue
+where
+  mixedContentCall.getMethod().hasName("setMixedContentMode") and
+  mixedContentCall.getArgument(0) = allowValue and
+  (
+    allowValue.getValue() = "0" or // MIXED_CONTENT_ALWAYS_ALLOW
+    allowValue.getValue().toString().matches("%ALWAYS_ALLOW%")
   )
-}
+select mixedContentCall, "Mixed content always allowed in WebView - potential security risk"
 
-/**
- * Run the taint analysis and report issues
- */
-from WebViewTaintConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
+or
+
+// Query for taint tracking from user input to WebView
+from WebViewTaintTrackingConfig config, DataFlow::PathNode source, DataFlow::PathNode sink
 where config.hasFlowPath(source, sink)
-select sink.getNode(), source, sink,
-  "Untrusted input flows into WebView method: " + sink.getNode().toString() + ". This can lead to RCE or XSS if not properly validated."
+select sink.getNode(), source, sink, "User input flows to WebView without proper sanitization"
+
+or
+
+// Query for hardcoded URLs in WebView calls
+from MethodAccess webviewCall, StringLiteral url
+where
+  webviewCall.getMethod() instanceof DangerousWebViewMethod and
+  webviewCall.getAnArgument() = url and
+  url.getValue().regexpMatch("https?://.*")
+select webviewCall, "Hardcoded URL loaded in WebView: " + url.getValue()
+
+or
+
+// Query for missing WebViewClient implementation
+from MethodAccess loadUrlCall, WebView webview
+where
+  loadUrlCall.getMethod().hasName("loadUrl") and
+  loadUrlCall.getQualifier() = webview.getAnAccess() and
+  not exists(MethodAccess setClientCall |
+    setClientCall.getMethod().hasName("setWebViewClient") and
+    setClientCall.getQualifier() = webview.getAnAccess()
+  )
+select loadUrlCall, "WebView loads URL without custom WebViewClient - may allow navigation to external sites"
+
+or
+
+// Query for DOM storage enabled without consideration
+from MethodAccess domStorageCall, Literal trueLiteral
+where
+  domStorageCall.getMethod().hasName("setDomStorageEnabled") and
+  domStorageCall.getArgument(0) = trueLiteral and
+  trueLiteral.getValue() = "true"
+select domStorageCall, "DOM storage enabled in WebView - ensure data sensitivity is considered"
