@@ -1,0 +1,3 @@
+name: "Custom Kotlin WebView Scans"
+queries:
+  - uses: ./github/codeql/custom-kotlin/queries
