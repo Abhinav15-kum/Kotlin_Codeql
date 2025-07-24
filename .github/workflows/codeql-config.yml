@@ -1,3 +1,4 @@
 name: "Custom Kotlin WebView Scans"
 queries:
-  - uses: codeql/custom-kotlin/queries
+  - uses: security-extended
+  - local: ./codeql/custom-kotlin/queries
