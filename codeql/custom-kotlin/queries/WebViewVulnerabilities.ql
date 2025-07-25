@@ -8,20 +8,12 @@
  */
 
 import kotlin
-import semmle.code.kotlin.controlflow.DataFlow
 
-from
-  MethodAccess ma,
-  PropertyAccess pa,
-  DataFlow::Node source,
-  DataFlow::Node sink
+from MethodAccess ma
 where
-  pa.getName() = "javaScriptEnabled" and
   ma.getMethod().getName() = "setJavaScriptEnabled" and
-  pa.getQualifier().getType().getName().matches("WebView") and
-  sink.asExpr() = ma.getArgument(0) and
-  source.asExpr() instanceof BooleanLiteral and
-  source.asExpr().toString() = "true"
+  ma.getReceiverType().hasQualifiedName("android.webkit", "WebView") and
+  exists(BooleanLiteral b | ma.getArgument(0) = b and b.getBooleanValue() = true)
 select
   ma,
   "Insecure WebView configuration: JavaScript is enabled without validation."
